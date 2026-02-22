@@ -8,10 +8,15 @@
 </head>
 <body>
     <div class="layout">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-left">
-                <h1>Task Managing Manager <span>macOS App &amp; Process Manager</span></h1>
+        <!-- Titlebar (macOS-style) -->
+        <header class="titlebar">
+            <div class="titlebar-left">
+                <div class="window-controls">
+                    <div class="window-dot close"></div>
+                    <div class="window-dot minimize"></div>
+                    <div class="window-dot maximize"></div>
+                </div>
+                <h1>Task Managing Manager <span>v1.0</span></h1>
             </div>
             <div class="sys-stats">
                 <div class="stat-item">
@@ -30,7 +35,7 @@
                     <span id="diskText">0%</span>
                 </div>
                 <div class="stat-item">
-                    <span>Procs: <strong id="totalProcessCount">0</strong></span>
+                    <span id="totalProcessCount">0</span> procs
                 </div>
             </div>
         </header>
@@ -100,9 +105,7 @@
             <!-- === Processes View === -->
             <div class="tab-content" id="view-processes">
                 <div class="filter-bar">
-                    <select id="processFilter" onchange="loadProcesses()" style="
-                        padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);
-                        border-radius:var(--radius);color:var(--text-primary);font-size:12px;outline:none">
+                    <select id="processFilter" onchange="loadProcesses()">
                         <option value="all">All Processes</option>
                         <option value="apps">GUI Apps Only</option>
                         <option value="system">System Only</option>
