@@ -1,51 +1,49 @@
 #!/bin/bash
 # Task Managing Manager - macOS App Launcher
 
-APP_DIR="/Users/kure/Documents/VSC/task-managing-manager"
-VENV_PYTHON="$APP_DIR/venv/bin/python"
+APP_DIR="$HOME/Library/Application Support/TaskManagingManager"
+PYTHON="$APP_DIR/venv/bin/python3"
 PORT=5050
 URL="http://127.0.0.1:$PORT"
-PID_FILE="/tmp/tmm-server.pid"
 LOG_FILE="/tmp/tmm-server.log"
 
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+
 # Kill any existing server on this port
-if [ -f "$PID_FILE" ]; then
-    OLD_PID=$(cat "$PID_FILE")
-    kill "$OLD_PID" 2>/dev/null
-    rm -f "$PID_FILE"
-fi
+lsof -ti :$PORT 2>/dev/null | xargs kill -9 2>/dev/null
+sleep 1
 
-# Also kill anything on the port
-lsof -ti :$PORT | xargs kill -9 2>/dev/null
+# Log startup
+echo "=== Starting Task Managing Manager $(date) ===" > "$LOG_FILE"
+echo "Python: $PYTHON" >> "$LOG_FILE"
+echo "App dir: $APP_DIR" >> "$LOG_FILE"
 
-# Start the Flask server in background
+# Start the Flask server
 cd "$APP_DIR"
-"$VENV_PYTHON" app.py > "$LOG_FILE" 2>&1 &
+"$PYTHON" "$APP_DIR/app.py" >> "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
-echo $SERVER_PID > "$PID_FILE"
+echo "Server PID: $SERVER_PID" >> "$LOG_FILE"
 
 # Wait for server to be ready
-for i in {1..30}; do
+READY=0
+for i in $(seq 1 30); do
     if curl -s "$URL" > /dev/null 2>&1; then
+        READY=1
         break
     fi
     sleep 0.5
 done
 
-# Open in default browser
-open "$URL"
+if [ "$READY" -eq 1 ]; then
+    open "$URL"
+    # Notification with close button (display dialog has an OK/Close button)
+    osascript -e 'display dialog "Task Managing Manager is running at http://127.0.0.1:5050" with title "Task Managing Manager" buttons {"Close"} default button "Close" giving up after 10' 2>/dev/null &
+else
+    echo "FAILED to start server" >> "$LOG_FILE"
+    osascript -e 'display dialog "Server failed to start. Check /tmp/tmm-server.log" with title "Error" buttons {"OK"} default button "OK"' 2>/dev/null
+    kill $SERVER_PID 2>/dev/null
+    exit 1
+fi
 
-# Keep the app running and show a menu bar notification
-# When the app window is closed, this will also handle cleanup
-osascript -e "
-    tell application \"System Events\"
-        display dialog \"Task Managing Manager is running at $URL\" & return & return & \"Click Stop to shut down the server.\" buttons {\"Stop\"} default button \"Stop\" with title \"Task Managing Manager\" with icon caution
-    end tell
-" 2>/dev/null
-
-# Cleanup: stop the server when dialog is dismissed
-kill "$SERVER_PID" 2>/dev/null
-rm -f "$PID_FILE"
-lsof -ti :$PORT | xargs kill -9 2>/dev/null
-
-exit 0
+# Keep app alive
+wait $SERVER_PID 2>/dev/null
