@@ -22,9 +22,9 @@
     --silver-bright: #d1d1d6;
     --border: rgba(255,255,255,0.04);
     --border-strong: rgba(255,255,255,0.08);
-    --radius: 16px;
-    --radius-sm: 10px;
-    --radius-xs: 6px;
+    --radius: 4px;
+    --radius-sm: 3px;
+    --radius-xs: 2px;
     --shadow-sm: 0 1px 4px rgba(0,0,0,0.3);
     --shadow: 0 4px 16px rgba(0,0,0,0.4);
     --shadow-lg: 0 12px 40px rgba(0,0,0,0.5);
@@ -203,7 +203,7 @@ body {
     font-size: 10px;
     font-weight: 500;
     padding: 2px 8px;
-    border-radius: 12px;
+    border-radius: 3px;
     min-width: 24px;
     text-align: center;
     font-variant-numeric: tabular-nums;
@@ -307,7 +307,7 @@ body {
     align-items: center;
     gap: 6px;
     padding: 8px 16px;
-    border-radius: 980px;
+    border-radius: 3px;
     border: none;
     background: rgba(255,255,255,0.06);
     color: var(--text-secondary);
@@ -400,7 +400,7 @@ body {
 .app-icon-placeholder {
     width: 44px;
     height: 44px;
-    border-radius: 11px;
+    border-radius: 4px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-strong);
     display: flex;
@@ -638,7 +638,7 @@ body {
 .diff-badge {
     display: inline-block;
     padding: 3px 10px;
-    border-radius: 980px;
+    border-radius: 3px;
     font-size: 11px;
     font-weight: 500;
     margin-right: 6px;
@@ -720,7 +720,7 @@ body {
 
 .toast {
     padding: 12px 20px;
-    border-radius: 980px;
+    border-radius: 3px;
     font-size: 13px;
     font-weight: 500;
     color: #fff;
@@ -783,7 +783,7 @@ select {
     padding: 8px 32px 8px 14px;
     background: var(--bg-card) url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23515154' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 12px center;
     border: 1px solid var(--border-strong);
-    border-radius: 980px;
+    border-radius: 3px;
     color: var(--text-primary);
     font-size: 12px;
     font-family: inherit;
