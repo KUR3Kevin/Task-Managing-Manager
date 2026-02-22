@@ -169,7 +169,7 @@ function renderAppGrid(apps) {
                         <span class="source-tag ${sourceClass}">${escHtml(app.install_source)}</span>
                         <span>${escHtml(app.version)}</span>
                         <span>${escHtml(app.size_human)}</span>
-                        ${isRunning ? '<span style="color:var(--green)">Running</span>' : ''}
+                        ${isRunning ? '<span style="color:var(--silver)">Running</span>' : ''}
                     </div>
                 </div>
                 <div class="app-card-actions">
@@ -192,7 +192,7 @@ function showAppDetail(app) {
             <div>
                 <h2 style="font-size:16px;margin-bottom:4px">${escHtml(app.name)}</h2>
                 <div style="font-size:11px;color:var(--text-muted)">${escHtml(app.bundle_id)}</div>
-                ${isRunning ? '<div style="color:var(--green);font-size:11px;margin-top:4px">Running</div>' : ''}
+                ${isRunning ? '<div style="color:var(--silver);font-size:11px;margin-top:4px">Running</div>' : ''}
             </div>
             <button class="detail-close" onclick="closeDetail()">&times;</button>
         </div>
@@ -414,7 +414,7 @@ async function loadSnapshotComparison() {
             </div>`;
 
         if (data.added.length > 0) {
-            html += '<h4 style="font-size:12px;margin:12px 0 6px;color:var(--green)">Added Apps</h4><div class="diff-list">';
+            html += '<h4 style="font-size:12px;margin:12px 0 6px;color:var(--silver)">Added Apps</h4><div class="diff-list">';
             html += data.added.map(a => `<div class="diff-item added">+ ${escHtml(a.name)} (${escHtml(a.install_source)})</div>`).join('');
             html += '</div>';
         }
@@ -424,7 +424,7 @@ async function loadSnapshotComparison() {
             html += '</div>';
         }
         if (data.updated.length > 0) {
-            html += '<h4 style="font-size:12px;margin:12px 0 6px;color:var(--accent)">Updated Apps</h4><div class="diff-list">';
+            html += '<h4 style="font-size:12px;margin:12px 0 6px;color:var(--tan)">Updated Apps</h4><div class="diff-list">';
             html += data.updated.map(a => `<div class="diff-item updated">${escHtml(a.name)}: ${escHtml(a.old_version)} &rarr; ${escHtml(a.new_version)}</div>`).join('');
             html += '</div>';
         }
