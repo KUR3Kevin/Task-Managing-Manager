@@ -51,6 +51,67 @@ class ProcessMonitor:
             pass
         return apps
 
+    def get_running_apps_detailed(self):
+        """Get running GUI apps with PID, name, and memory usage."""
+        apps = []
+        try:
+            script = '''
+            tell application "System Events"
+                set appList to ""
+                repeat with p in (every process whose background only is false)
+                    set appList to appList & name of p & "|" & unix id of p & ","
+                end repeat
+                return appList
+            end tell
+            '''
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                entries = [e.strip() for e in result.stdout.strip().split(",") if e.strip()]
+                for entry in entries:
+                    parts = entry.split("|")
+                    if len(parts) == 2:
+                        name = parts[0].strip()
+                        try:
+                            pid = int(parts[1].strip())
+                        except ValueError:
+                            continue
+                        # Get memory info from psutil
+                        mem_mb = 0
+                        cpu = 0
+                        try:
+                            proc = psutil.Process(pid)
+                            mem = proc.memory_info()
+                            mem_mb = round(mem.rss / (1024 * 1024), 1)
+                            cpu = proc.cpu_percent(interval=0)
+                        except Exception:
+                            pass
+                        apps.append({
+                            "name": name,
+                            "pid": pid,
+                            "memory_mb": mem_mb,
+                            "cpu_percent": cpu,
+                        })
+        except Exception:
+            pass
+        return apps
+
+    def graceful_quit_by_name(self, app_name):
+        """Gracefully quit an app using AppleScript (like clicking Quit)."""
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", f'tell application "{app_name}" to quit'],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                return {"success": True, "message": f"Sent quit to {app_name}"}
+            else:
+                return {"success": False, "message": f"Failed to quit {app_name}: {result.stderr}"}
+        except Exception as e:
+            return {"success": False, "message": str(e)}
+
     def get_system_stats(self):
         """Get overall system resource usage."""
         cpu_percent = psutil.cpu_percent(interval=0.1)

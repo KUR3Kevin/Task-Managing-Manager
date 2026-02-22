@@ -6,6 +6,7 @@ let currentView = 'apps';
 let allApps = [];
 let allProcesses = [];
 let runningAppNames = [];
+let runningAppsDetailed = {}; // name -> {pid, memory_mb, cpu_percent}
 let sourceFilter = '';
 let processSort = { key: 'cpu_percent', dir: 'desc' };
 let monitoringActive = false;
@@ -74,6 +75,13 @@ function bindEvents() {
 
     // Also load initial system stats
     loadSystemStats();
+
+    // Auto-refresh running apps every 5 seconds
+    setInterval(() => {
+        loadRunningApps().then(() => {
+            if (currentView === 'apps') filterAndRenderApps();
+        });
+    }, 5000);
 }
 
 function switchView(view) {
@@ -119,11 +127,16 @@ async function loadApps(force = false) {
 
 async function loadRunningApps() {
     try {
-        const res = await fetch(`${API}/api/running-apps`);
+        const res = await fetch(`${API}/api/running-apps-detailed`);
         const data = await res.json();
-        runningAppNames = data.apps.map(n => n.toLowerCase().trim());
+        runningAppNames = data.apps.map(a => a.name.toLowerCase().trim());
+        runningAppsDetailed = {};
+        data.apps.forEach(a => {
+            runningAppsDetailed[a.name.toLowerCase().trim()] = a;
+        });
     } catch (err) {
         runningAppNames = [];
+        runningAppsDetailed = {};
     }
 }
 
@@ -154,10 +167,26 @@ function renderAppGrid(apps) {
         return;
     }
 
+    // Protected apps that should not be quit
+    const protectedApps = ['finder'];
+
     container.innerHTML = apps.map(app => {
         const initial = app.name.charAt(0).toUpperCase();
         const isRunning = runningAppNames.includes(app.name.toLowerCase());
+        const isProtected = protectedApps.includes(app.name.toLowerCase());
         const sourceClass = getSourceClass(app.install_source);
+        const runInfo = runningAppsDetailed[app.name.toLowerCase()];
+
+        let actionButtons = '';
+        if (isRunning && !isProtected) {
+            actionButtons = `
+                <button class="btn" onclick="event.stopPropagation(); gracefulQuitApp('${escHtml(app.name)}')" title="Quit normally">Quit</button>
+                <button class="btn danger" onclick="event.stopPropagation(); forceQuitByName('${escHtml(app.name)}')" title="Force Quit">Force</button>`;
+        } else if (isRunning && isProtected) {
+            actionButtons = `<span style="color:var(--text-muted);font-size:11px">System</span>`;
+        } else {
+            actionButtons = `<button class="btn success" onclick="event.stopPropagation(); launchApp('${escHtml(app.path)}')" title="Launch">Open</button>`;
+        }
 
         return `
             <div class="app-card ${isRunning ? 'running' : ''}"
@@ -170,13 +199,11 @@ function renderAppGrid(apps) {
                         <span>${escHtml(app.version)}</span>
                         <span>${escHtml(app.size_human)}</span>
                         ${isRunning ? '<span style="color:var(--silver)">Running</span>' : ''}
+                        ${runInfo ? `<span>${runInfo.memory_mb} MB</span>` : ''}
                     </div>
                 </div>
                 <div class="app-card-actions">
-                    ${isRunning
-                        ? `<button class="btn danger" onclick="event.stopPropagation(); quitAppByName('${escHtml(app.name)}')" title="Force Quit">Quit</button>`
-                        : `<button class="btn success" onclick="event.stopPropagation(); launchApp('${escHtml(app.path)}')" title="Launch">Open</button>`
-                    }
+                    ${actionButtons}
                 </div>
             </div>`;
     }).join('');
@@ -212,6 +239,10 @@ function showAppDetail(app) {
             <div class="detail-actions">
                 <button class="btn success" onclick="launchApp('${escHtml(app.path)}')">Open App</button>
                 <button class="btn" onclick="revealInFinder('${escHtml(app.path)}')">Show in Finder</button>
+                ${isRunning && app.name.toLowerCase() !== 'finder' ? `
+                    <button class="btn" onclick="gracefulQuitApp('${escHtml(app.name)}')">Quit</button>
+                    <button class="btn danger" onclick="forceQuitByName('${escHtml(app.name)}')">Force Quit</button>
+                ` : ''}
             </div>
         </div>`;
 
@@ -533,6 +564,32 @@ async function quitAppByName(appName) {
         }
     } catch (err) {
         showToast('Failed to find process', 'error');
+    }
+}
+
+async function gracefulQuitApp(appName) {
+    try {
+        const res = await fetch(`${API}/api/quit-by-name`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: appName })
+        });
+        const data = await res.json();
+        showToast(data.message, data.success ? 'success' : 'error');
+        if (data.success) {
+            setTimeout(() => loadRunningApps().then(filterAndRenderApps), 2000);
+        }
+    } catch (err) {
+        showToast('Failed to quit app', 'error');
+    }
+}
+
+async function forceQuitByName(appName) {
+    const info = runningAppsDetailed[appName.toLowerCase()];
+    if (info && info.pid) {
+        forceQuit(info.pid);
+    } else {
+        quitAppByName(appName);
     }
 }
 

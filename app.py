@@ -190,6 +190,24 @@ def api_running_apps():
     return jsonify({"apps": apps})
 
 
+@app.route("/api/running-apps-detailed")
+def api_running_apps_detailed():
+    """Get running GUI apps with PID and resource usage."""
+    apps = monitor.get_running_apps_detailed()
+    return jsonify({"apps": apps, "count": len(apps)})
+
+
+@app.route("/api/quit-by-name", methods=["POST"])
+def api_quit_by_name():
+    """Gracefully quit an app by name (AppleScript)."""
+    data = request.get_json()
+    name = data.get("name", "")
+    if not name:
+        return jsonify({"success": False, "message": "App name required"}), 400
+    result = monitor.graceful_quit_by_name(name)
+    return jsonify(result)
+
+
 # --- WebSocket Events ---
 
 @socketio.on('connect')

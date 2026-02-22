@@ -1,0 +1,51 @@
+#!/bin/bash
+# Task Managing Manager - macOS App Launcher
+
+APP_DIR="/Users/kure/Documents/VSC/task-managing-manager"
+VENV_PYTHON="$APP_DIR/venv/bin/python"
+PORT=5050
+URL="http://127.0.0.1:$PORT"
+PID_FILE="/tmp/tmm-server.pid"
+LOG_FILE="/tmp/tmm-server.log"
+
+# Kill any existing server on this port
+if [ -f "$PID_FILE" ]; then
+    OLD_PID=$(cat "$PID_FILE")
+    kill "$OLD_PID" 2>/dev/null
+    rm -f "$PID_FILE"
+fi
+
+# Also kill anything on the port
+lsof -ti :$PORT | xargs kill -9 2>/dev/null
+
+# Start the Flask server in background
+cd "$APP_DIR"
+"$VENV_PYTHON" app.py > "$LOG_FILE" 2>&1 &
+SERVER_PID=$!
+echo $SERVER_PID > "$PID_FILE"
+
+# Wait for server to be ready
+for i in {1..30}; do
+    if curl -s "$URL" > /dev/null 2>&1; then
+        break
+    fi
+    sleep 0.5
+done
+
+# Open in default browser
+open "$URL"
+
+# Keep the app running and show a menu bar notification
+# When the app window is closed, this will also handle cleanup
+osascript -e "
+    tell application \"System Events\"
+        display dialog \"Task Managing Manager is running at $URL\" & return & return & \"Click Stop to shut down the server.\" buttons {\"Stop\"} default button \"Stop\" with title \"Task Managing Manager\" with icon caution
+    end tell
+" 2>/dev/null
+
+# Cleanup: stop the server when dialog is dismissed
+kill "$SERVER_PID" 2>/dev/null
+rm -f "$PID_FILE"
+lsof -ti :$PORT | xargs kill -9 2>/dev/null
+
+exit 0
