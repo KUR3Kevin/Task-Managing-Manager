@@ -69,7 +69,13 @@ class AppScanner:
             with open(info_plist_path, "rb") as f:
                 plist = plistlib.load(f)
 
-            name = plist.get("CFBundleDisplayName") or plist.get("CFBundleName") or Path(app_path).stem
+            plist_name = plist.get("CFBundleDisplayName") or plist.get("CFBundleName") or Path(app_path).stem
+            folder_name = Path(app_path).stem  # e.g., "Visual Studio Code"
+            # Prefer folder name when plist name is too short/generic (e.g., "Code" vs "Visual Studio Code")
+            if len(folder_name) > len(plist_name) and plist_name.lower() in folder_name.lower():
+                name = folder_name
+            else:
+                name = plist_name
             bundle_id = plist.get("CFBundleIdentifier", f"unknown.{Path(app_path).stem}")
             version = plist.get("CFBundleShortVersionString", "Unknown")
             build = plist.get("CFBundleVersion", "")
