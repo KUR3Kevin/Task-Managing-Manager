@@ -181,6 +181,11 @@ class ProcessMonitor:
 
     def graceful_quit_by_name(self, app_name):
         """Gracefully quit an app using AppleScript (like clicking Quit)."""
+        # Guard against AppleScript injection: reject any name that contains
+        # characters that could break out of the AppleScript string literal or
+        # introduce additional statements.
+        if not app_name or any(c in app_name for c in ('"', "'", '\n', '\r', '\\')):
+            return {"success": False, "message": "Invalid app name"}
         try:
             result = subprocess.run(
                 ["osascript", "-e", f'tell application "{app_name}" to quit'],

@@ -4,6 +4,7 @@
 import os
 import sys
 import json
+import secrets
 import threading
 import time
 from flask import Flask, render_template, jsonify, request
@@ -18,8 +19,18 @@ from scanner.pkg_history import PkgHistory
 from scanner.snapshot import SnapshotManager
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'task-managing-manager-secret'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+# Load secret from environment, or generate a fresh random one at startup.
+# Never commit a real secret into source control.
+app.config['SECRET_KEY'] = os.environ.get('TMM_SECRET_KEY') or secrets.token_hex(32)
+
+# Restrict WebSocket/CORS to the local server only.
+# cors_allowed_origins="*" would let any website (including DNS-rebinding
+# attackers) read responses from this local API.
+_ALLOWED_ORIGINS = [
+    "http://127.0.0.1:5050",
+    "http://localhost:5050",
+]
+socketio = SocketIO(app, cors_allowed_origins=_ALLOWED_ORIGINS, async_mode='threading')
 
 # Initialize scanner modules
 scanner = AppScanner()
@@ -132,10 +143,24 @@ def api_quit():
     force = data.get("force", True)
     if not pid:
         return jsonify({"success": False, "message": "PID required"}), 400
+
+    try:
+        pid = int(pid)
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "message": "Invalid PID"}), 400
+
+    # Block killing low-numbered PIDs (kernel, launchd, system daemons).
+    # On macOS PIDs 0-100 are reserved for OS internals.
+    if pid <= 100:
+        return jsonify({"success": False, "message": "Cannot kill system process"}), 403
+    # Never allow killing the server itself.
+    if pid == os.getpid():
+        return jsonify({"success": False, "message": "Cannot kill the server process"}), 403
+
     if force:
-        result = monitor.force_quit_app(int(pid))
+        result = monitor.force_quit_app(pid)
     else:
-        result = monitor.graceful_quit_app(int(pid))
+        result = monitor.graceful_quit_app(pid)
     return jsonify(result)
 
 
@@ -179,6 +204,13 @@ def api_compare_snapshot():
 @app.route("/api/snapshots/<filename>", methods=["DELETE"])
 def api_delete_snapshot(filename):
     """Delete a snapshot."""
+    # Reject filenames that contain path separators or traversal sequences
+    # before they ever reach the filesystem layer.
+    if (os.sep in filename
+            or (os.altsep and os.altsep in filename)
+            or '..' in filename
+            or filename.startswith('/')):
+        return jsonify({"success": False, "message": "Invalid filename"}), 400
     success = snapshots.delete_snapshot(filename)
     return jsonify({"success": success})
 

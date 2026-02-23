@@ -121,7 +121,18 @@ class SnapshotManager:
 
     def delete_snapshot(self, filename):
         """Delete a specific snapshot."""
-        filepath = os.path.join(self.snapshot_dir, filename)
+        # Resolve both paths to their real, canonical forms so that any
+        # remaining traversal sequences (e.g. symlinks) are eliminated before
+        # we compare.  If the resolved file path doesn't start with the
+        # resolved snapshot directory, refuse the operation.
+        safe_dir = os.path.realpath(self.snapshot_dir)
+        filepath = os.path.realpath(os.path.join(self.snapshot_dir, filename))
+        if not filepath.startswith(safe_dir + os.sep):
+            return False
+        # Only delete files that look like our own snapshots.
+        if not (os.path.basename(filepath).startswith("snapshot_")
+                and filepath.endswith(".json")):
+            return False
         if os.path.exists(filepath):
             os.remove(filepath)
             return True
