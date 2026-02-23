@@ -223,12 +223,19 @@ def handle_start_monitoring():
     monitoring_active = True
 
     def monitor_loop():
+        # Prime CPU measurements so the first real reading is accurate.
+        # psutil returns 0.0 on the very first cpu_percent() call per process
+        # because there's no prior time reference.  After a 1-second sleep the
+        # next call uses elapsed wall-clock time and gives correct values.
+        monitor.prime_cpu_measurements()
+        time.sleep(1.0)
+
         while monitoring_active:
             try:
                 stats = monitor.get_system_stats()
                 procs = monitor.get_all_processes()
-                # Send top 50 processes by CPU
-                top_procs = sorted(procs, key=lambda x: x['cpu_percent'], reverse=True)[:50]
+                # Send top 100 processes by CPU
+                top_procs = sorted(procs, key=lambda x: x['cpu_percent'], reverse=True)[:100]
                 socketio.emit('system_update', {
                     'stats': stats,
                     'top_processes': top_procs,

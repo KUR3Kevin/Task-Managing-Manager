@@ -2,17 +2,34 @@ import psutil
 import subprocess
 import os
 import signal
+import time
 
 
 class ProcessMonitor:
     """Real-time process monitoring for macOS."""
+
+    def prime_cpu_measurements(self):
+        """
+        Call cpu_percent once for all processes to prime the measurement.
+        psutil returns 0.0 on the very first call per process (no prior
+        reference point). After this warm-up + a short sleep, subsequent
+        calls with interval=None return accurate values.
+        """
+        try:
+            for proc in psutil.process_iter():
+                try:
+                    proc.cpu_percent(interval=None)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except Exception:
+            pass
 
     def get_all_processes(self):
         """Get all running processes with details."""
         processes = []
         for proc in psutil.process_iter(['pid', 'name', 'status', 'cpu_percent',
                                           'memory_info', 'create_time', 'username',
-                                          'ppid', 'cmdline']):
+                                          'ppid', 'cmdline', 'exe']):
             try:
                 info = proc.info
                 mem = info.get('memory_info')
@@ -20,7 +37,8 @@ class ProcessMonitor:
                     "pid": info['pid'],
                     "name": info['name'] or "Unknown",
                     "status": info['status'],
-                    "cpu_percent": proc.cpu_percent(interval=0),
+                    # interval=None: use elapsed time since last call (accurate in loops)
+                    "cpu_percent": proc.cpu_percent(interval=None),
                     "memory_mb": round(mem.rss / (1024 * 1024), 1) if mem else 0,
                     "memory_bytes": mem.rss if mem else 0,
                     "create_time": info.get('create_time', 0),
@@ -42,7 +60,7 @@ class ProcessMonitor:
             result = subprocess.run(
                 ["osascript", "-e",
                  'tell application "System Events" to get name of every process whose background only is false'],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=5
             )
             if result.returncode == 0:
                 app_names = [n.strip() for n in result.stdout.strip().split(",")]
@@ -52,8 +70,22 @@ class ProcessMonitor:
         return apps
 
     def get_running_apps_detailed(self):
-        """Get running GUI apps with PID, name, and memory usage."""
-        apps = []
+        """
+        Get running GUI apps with PID, name, and resource usage.
+
+        Uses two independent methods so that when one fails (e.g. AppleScript
+        times out under high CPU), the other still provides data:
+
+          1. AppleScript / System Events  – authoritative list of foreground
+             GUI apps shown in the Dock / App Switcher.
+          2. psutil exe-path inspection  – catches *every* process whose
+             binary lives inside a .app bundle, including FaceTime and all
+             apps in /System/Applications that AppleScript might miss or
+             time-out on.
+        """
+        apps_by_pid = {}
+
+        # ── Method 1: AppleScript ────────────────────────────────────────────
         try:
             script = '''
             tell application "System Events"
@@ -66,7 +98,7 @@ class ProcessMonitor:
             '''
             result = subprocess.run(
                 ["osascript", "-e", script],
-                capture_output=True, text=True, timeout=10
+                capture_output=True, text=True, timeout=5   # was 10; 5 s is plenty
             )
             if result.returncode == 0:
                 entries = [e.strip() for e in result.stdout.strip().split(",") if e.strip()]
@@ -78,25 +110,74 @@ class ProcessMonitor:
                             pid = int(parts[1].strip())
                         except ValueError:
                             continue
-                        # Get memory info from psutil
-                        mem_mb = 0
-                        cpu = 0
+                        mem_mb, cpu = 0, 0.0
                         try:
                             proc = psutil.Process(pid)
                             mem = proc.memory_info()
                             mem_mb = round(mem.rss / (1024 * 1024), 1)
-                            cpu = proc.cpu_percent(interval=0)
+                            cpu = proc.cpu_percent(interval=None)
                         except Exception:
                             pass
-                        apps.append({
+                        apps_by_pid[pid] = {
                             "name": name,
                             "pid": pid,
                             "memory_mb": mem_mb,
                             "cpu_percent": cpu,
-                        })
+                        }
         except Exception:
             pass
-        return apps
+
+        # ── Method 2: psutil exe-path scan ──────────────────────────────────
+        # Catches every process whose executable is inside a .app bundle,
+        # even if AppleScript timed out or the app is backgrounded.
+        marker = '.app/Contents/MacOS/'
+        try:
+            for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline', 'memory_info']):
+                try:
+                    pid = proc.info['pid']
+                    if pid in apps_by_pid:
+                        continue   # already found via AppleScript
+
+                    exe = proc.info.get('exe') or ''
+                    cmdline = ' '.join(proc.info.get('cmdline') or [])
+
+                    source_str = ''
+                    if marker in exe:
+                        source_str = exe
+                    elif marker in cmdline:
+                        source_str = cmdline
+
+                    if not source_str:
+                        continue
+
+                    # Extract the human-readable app name from the path
+                    idx = source_str.find(marker)
+                    segment = source_str[:idx]          # e.g. "/System/Applications/FaceTime"
+                    app_name = segment.rsplit('/', 1)[-1]
+                    if app_name.endswith('.app'):
+                        app_name = app_name[:-4]
+                    if not app_name:
+                        app_name = proc.info.get('name') or 'Unknown'
+
+                    mem_mb = 0
+                    try:
+                        mem = proc.info.get('memory_info')
+                        mem_mb = round(mem.rss / (1024 * 1024), 1) if mem else 0
+                    except Exception:
+                        pass
+
+                    apps_by_pid[pid] = {
+                        "name": app_name,
+                        "pid": pid,
+                        "memory_mb": mem_mb,
+                        "cpu_percent": proc.cpu_percent(interval=None),
+                    }
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except Exception:
+            pass
+
+        return list(apps_by_pid.values())
 
     def graceful_quit_by_name(self, app_name):
         """Gracefully quit an app using AppleScript (like clicking Quit)."""
@@ -164,7 +245,6 @@ class ProcessMonitor:
         except psutil.NoSuchProcess:
             return {"success": False, "message": f"Process {pid} not found"}
         except psutil.AccessDenied:
-            # Try with sudo via osascript
             try:
                 subprocess.run(
                     ["kill", "-9", str(pid)],
@@ -191,12 +271,26 @@ class ProcessMonitor:
             return {"success": False, "message": str(e)}
 
     def _is_gui_app(self, proc_info):
-        """Heuristic to detect if a process is a GUI app."""
+        """
+        Detect if a process is a GUI app.
+        Checks both the executable path and the command-line arguments for the
+        '.app/Contents/MacOS/' pattern — this reliably covers all app bundles
+        including those in /System/Applications/ (FaceTime, Calendar, etc.).
+        """
+        marker = '.app/Contents/MacOS/'
+
+        # Check the resolved executable path first (most reliable)
+        exe = proc_info.get('exe') or ''
+        if marker in exe:
+            return True
+
+        # Fall back to checking the full command line
         cmdline = proc_info.get('cmdline') or []
         if cmdline:
             cmd = ' '.join(cmdline)
-            if '.app/Contents/MacOS/' in cmd:
+            if marker in cmd:
                 return True
+
         return False
 
     def get_process_tree(self, pid):

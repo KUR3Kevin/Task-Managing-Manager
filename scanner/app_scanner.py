@@ -9,7 +9,14 @@ from datetime import datetime
 class AppScanner:
     """Scans /Applications and ~/Applications for installed apps."""
 
-    SEARCH_DIRS = ["/Applications", os.path.expanduser("~/Applications")]
+    SEARCH_DIRS = [
+        "/Applications",
+        os.path.expanduser("~/Applications"),
+        # Apple system apps live here on macOS Catalina+
+        # (FaceTime, Calendar, Maps, Messages, etc.)
+        "/System/Applications",
+        "/System/Applications/Utilities",
+    ]
 
     def __init__(self):
         self._cache = {}
@@ -207,8 +214,10 @@ class AppScanner:
         except Exception:
             pass
 
-        # Check if it's a system app
-        if app_path.startswith("/Applications/Utilities") or app_path.startswith("/System"):
+        # Check if it's a system / Apple OS app
+        if (app_path.startswith("/System/Applications")
+                or app_path.startswith("/System/Library")
+                or app_path.startswith("/Applications/Utilities")):
             return "System"
 
         # Default
