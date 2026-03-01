@@ -18,8 +18,12 @@ from scanner.pkg_history import PkgHistory
 from scanner.snapshot import SnapshotManager
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'task-managing-manager-secret'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+_secret = os.environ.get('SECRET_KEY')
+if not _secret:
+    import secrets as _secrets
+    _secret = _secrets.token_hex(32)
+app.config['SECRET_KEY'] = _secret
+socketio = SocketIO(app, cors_allowed_origins="http://127.0.0.1:5050", async_mode='threading')
 
 # Initialize scanner modules
 scanner = AppScanner()
@@ -113,6 +117,12 @@ def api_system():
     return jsonify(stats)
 
 
+ALLOWED_APP_DIRS = [
+    "/Applications",
+    os.path.expanduser("~/Applications"),
+    "/System/Applications",
+]
+
 @app.route("/api/launch", methods=["POST"])
 def api_launch():
     """Launch an application."""
@@ -120,6 +130,11 @@ def api_launch():
     app_path = data.get("path", "")
     if not app_path or not os.path.exists(app_path):
         return jsonify({"success": False, "message": "Invalid app path"}), 400
+    if not app_path.endswith(".app"):
+        return jsonify({"success": False, "message": "Only .app bundles can be launched"}), 400
+    real_path = os.path.realpath(app_path)
+    if not any(real_path.startswith(os.path.realpath(d)) for d in ALLOWED_APP_DIRS):
+        return jsonify({"success": False, "message": "App path is outside allowed directories"}), 400
     result = monitor.launch_app(app_path)
     return jsonify(result)
 
