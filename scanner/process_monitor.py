@@ -182,14 +182,27 @@ class ProcessMonitor:
     def graceful_quit_by_name(self, app_name):
         """Gracefully quit an app using AppleScript (like clicking Quit)."""
         try:
+            import re
+            # Strict whitelist: only alphanumeric, spaces, dots, hyphens (no quotes, backslashes, etc.)
+            safe_name = re.sub(r'[^a-zA-Z0-9 ._-]', '', str(app_name)).strip()
+
+            # Reject empty names or suspiciously long ones (real app names are <100 chars)
+            if not safe_name or len(safe_name) > 100:
+                return {"success": False, "message": "Invalid application name"}
+
+            # Validate against the list of currently running GUI app names
+            running_names = set(self.get_running_apps())
+            if safe_name not in running_names:
+                return {"success": False, "message": f"App '{safe_name}' is not currently running"}
+
             result = subprocess.run(
-                ["osascript", "-e", f'tell application "{app_name}" to quit'],
+                ["osascript", "-e", f'tell application "{safe_name}" to quit'],
                 capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0:
-                return {"success": True, "message": f"Sent quit to {app_name}"}
+                return {"success": True, "message": f"Sent quit to {safe_name}"}
             else:
-                return {"success": False, "message": f"Failed to quit {app_name}: {result.stderr}"}
+                return {"success": False, "message": f"Failed to quit {safe_name}"}
         except Exception as e:
             return {"success": False, "message": str(e)}
 

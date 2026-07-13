@@ -17,7 +17,7 @@
                     <div class="window-dot maximize"></div>
                 </div>
                 <div class="titlebar-title">
-                    <h1>Task Managing Manager <span>v1.1</span></h1>
+                    <h1>Task Managing Manager <span>v1.2</span></h1>
                     <div class="live-badge" id="liveBadge">
                         <div class="live-dot"></div>
                         Live
@@ -57,27 +57,23 @@
             <div class="sidebar-section">
                 <h3>Views</h3>
                 <div class="nav-item active" data-view="apps">
-                    <span class="icon">&#9733;</span>
+                    <span class="icon">&#9638;</span>
                     <span>Applications</span>
                     <span class="nav-badge" id="appCount">0</span>
                 </div>
                 <div class="nav-item" data-view="processes">
-                    <span class="icon">&#9881;</span>
+                    <span class="icon">&#8767;</span>
                     <span>Processes</span>
                     <span class="nav-badge" id="processCount">0</span>
                 </div>
                 <div class="nav-item" data-view="packages">
-                    <span class="icon">&#9776;</span>
+                    <span class="icon">&#9633;</span>
                     <span>Pkg Receipts</span>
                     <span class="nav-badge" id="pkgCount">0</span>
                 </div>
                 <div class="nav-item" data-view="removed">
-                    <span class="icon">&#10006;</span>
+                    <span class="icon">&#8722;</span>
                     <span>Removed Pkgs</span>
-                </div>
-                <div class="nav-item" data-view="snapshots">
-                    <span class="icon">&#128247;</span>
-                    <span>Snapshots</span>
                 </div>
             </div>
 
@@ -174,27 +170,6 @@
                 </div>
             </div>
 
-            <!-- === Snapshots View === -->
-            <div class="tab-content" id="view-snapshots">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-                    <div>
-                        <h3 style="font-size:13px;margin-bottom:4px;color:var(--text-primary)">App Snapshots</h3>
-                        <p style="font-size:12px;color:var(--text-muted)">
-                            Save snapshots to track apps added or removed over time.
-                        </p>
-                    </div>
-                    <button class="btn primary" onclick="saveSnapshot()">Save Snapshot Now</button>
-                </div>
-
-                <div id="snapshotList">
-                    <div class="loading"><div class="spinner"></div>Loading snapshots...</div>
-                </div>
-
-                <h3 style="font-size:13px;margin:22px 0 10px;color:var(--text-primary)">Changes Since Last Snapshot</h3>
-                <div id="snapshotComparison">
-                    <div class="empty-state">Save a snapshot first to start tracking.</div>
-                </div>
-            </div>
         </main>
     </div>
 

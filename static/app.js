@@ -4,6 +4,7 @@ const API = '';
 let socket = null;
 let currentView = 'apps';
 let allApps = [];
+let appsLoaded = false;
 let allProcesses = [];
 let runningAppNames = [];
 let runningAppsDetailed = {};   // name (lower) -> { pid, memory_mb, cpu_percent }
@@ -109,7 +110,7 @@ function bindEvents() {
     // Refresh running-apps list every 5 s so status badges stay fresh
     setInterval(() => {
         loadRunningApps().then(() => {
-            if (currentView === 'apps') {
+            if (currentView === 'apps' && appsLoaded) {
                 filterAndRenderApps();
                 renderRunningStrip();
             }
@@ -134,7 +135,6 @@ function switchView(view) {
 
     if      (view === 'processes') renderProcesses(allProcesses, allProcesses.length);
     else if (view === 'packages')  loadPackages();
-    else if (view === 'snapshots') loadSnapshots();
     else if (view === 'removed')   loadRemoved();
 }
 
@@ -143,16 +143,19 @@ function switchView(view) {
 // ============================================================
 async function loadApps(force = false) {
     const container = document.getElementById('appGrid');
+    appsLoaded = false;
     container.innerHTML = '<div class="loading"><div class="spinner"></div>Scanning applications…</div>';
 
     try {
         const res = await fetch(`${API}/api/apps?force=${force}`);
         const data = await res.json();
         allApps = data.apps;
+        appsLoaded = true;
         document.getElementById('appCount').textContent = data.total;
         filterAndRenderApps();
         renderRunningStrip();
     } catch (err) {
+        appsLoaded = false;
         container.innerHTML = '<div class="empty-state">Failed to load apps. Is the server running?</div>';
     }
 }
@@ -481,106 +484,6 @@ async function loadRemoved() {
         `).join('');
     } catch (err) {
         container.innerHTML = '<div class="empty-state">Failed to check removed packages.</div>';
-    }
-}
-
-// ============================================================
-//  Snapshots
-// ============================================================
-async function loadSnapshots() {
-    const container = document.getElementById('snapshotList');
-
-    try {
-        const res  = await fetch(`${API}/api/snapshots`);
-        const data = await res.json();
-
-        if (data.snapshots.length === 0) {
-            container.innerHTML = '<div class="empty-state">No snapshots yet. Take one to start tracking changes.</div>';
-        } else {
-            container.innerHTML = '<div class="snapshot-cards">' +
-                data.snapshots.map(s => `
-                    <div class="snapshot-card">
-                        <h4>${escHtml(s.filename)}</h4>
-                        <div class="meta">${escHtml(s.timestamp)} &middot; ${s.app_count} apps</div>
-                        <button class="btn danger" onclick="deleteSnapshot('${escHtml(s.filename)}')"
-                                style="font-size:10px;padding:3px 8px">Delete</button>
-                    </div>
-                `).join('') + '</div>';
-        }
-
-        loadSnapshotComparison();
-    } catch (err) {
-        container.innerHTML = '<div class="empty-state">Failed to load snapshots.</div>';
-    }
-}
-
-async function saveSnapshot() {
-    try {
-        const res  = await fetch(`${API}/api/snapshots/save`, { method: 'POST' });
-        const data = await res.json();
-        showToast(`Snapshot saved: ${data.app_count} apps captured`, 'success');
-        loadSnapshots();
-    } catch (err) {
-        showToast('Failed to save snapshot', 'error');
-    }
-}
-
-async function deleteSnapshot(filename) {
-    try {
-        await fetch(`${API}/api/snapshots/${filename}`, { method: 'DELETE' });
-        showToast('Snapshot deleted', 'info');
-        loadSnapshots();
-    } catch (err) {
-        showToast('Failed to delete snapshot', 'error');
-    }
-}
-
-async function loadSnapshotComparison() {
-    const container = document.getElementById('snapshotComparison');
-
-    try {
-        const res  = await fetch(`${API}/api/snapshots/compare`);
-        const data = await res.json();
-
-        if (!data.has_previous) {
-            container.innerHTML = '<div class="empty-state">Save at least one snapshot to start comparing.</div>';
-            return;
-        }
-
-        let html = `
-            <div style="margin-bottom:10px;font-size:12px;color:var(--text-secondary)">
-                Comparing with snapshot from ${escHtml(data.snapshot_date)}<br>
-                Previous: ${data.previous_count} apps &rarr; Current: ${data.current_count} apps
-            </div>
-            <div style="display:flex;gap:7px;margin-bottom:12px">
-                <span class="diff-badge added">+${data.added_count} Added</span>
-                <span class="diff-badge removed">-${data.removed_count} Removed</span>
-                <span class="diff-badge updated">${data.updated_count} Updated</span>
-            </div>`;
-
-        if (data.added.length > 0) {
-            html += '<h4 style="font-size:11.5px;margin:10px 0 5px;color:var(--blue-bright)">Added Apps</h4><div class="diff-list">';
-            html += data.added.map(a => `<div class="diff-item added">+ ${escHtml(a.name)} (${escHtml(a.install_source)})</div>`).join('');
-            html += '</div>';
-        }
-        if (data.removed.length > 0) {
-            html += '<h4 style="font-size:11.5px;margin:10px 0 5px;color:var(--red)">Removed Apps</h4><div class="diff-list">';
-            html += data.removed.map(a => `<div class="diff-item removed">- ${escHtml(a.name)}</div>`).join('');
-            html += '</div>';
-        }
-        if (data.updated.length > 0) {
-            html += '<h4 style="font-size:11.5px;margin:10px 0 5px;color:var(--amber)">Updated Apps</h4><div class="diff-list">';
-            html += data.updated.map(a => `<div class="diff-item updated">${escHtml(a.name)}: ${escHtml(a.old_version)} &rarr; ${escHtml(a.new_version)}</div>`).join('');
-            html += '</div>';
-        }
-
-        if (!data.added.length && !data.removed.length && !data.updated.length) {
-            html += '<div class="empty-state">No changes since last snapshot.</div>';
-        }
-
-        container.innerHTML = html;
-    } catch (err) {
-        container.innerHTML = '<div class="empty-state">Failed to compare snapshots.</div>';
     }
 }
 
