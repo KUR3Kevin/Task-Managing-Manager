@@ -86,6 +86,11 @@ class AppScanner:
             # Get metadata via mdls
             metadata = self._get_mdls_metadata(app_path)
 
+            # Determine the executable architectures when the plist does not say.
+            architectures = plist.get("LSArchitecturePriority")
+            if not architectures:
+                architectures = self._get_architectures(app_path, plist)
+
             # Detect install source
             source = self._detect_install_source(app_path, bundle_id)
 
@@ -106,7 +111,7 @@ class AppScanner:
                 "install_date": metadata.get("install_date", "Unknown"),
                 "last_opened": metadata.get("last_opened", "Unknown"),
                 "icon_file": icon_file,
-                "architecture": plist.get("LSArchitecturePriority", ["Unknown"]),
+                "architecture": architectures,
                 "min_os": plist.get("LSMinimumSystemVersion", "Unknown"),
                 "copyright": plist.get("NSHumanReadableCopyright", ""),
                 "category": plist.get("LSApplicationCategoryType", "Unknown"),
@@ -158,12 +163,12 @@ class AppScanner:
                  "-raw", app_path],
                 capture_output=True, text=True, timeout=5
             )
-            lines = result.stdout.strip().split("\n")
-            # Parse the raw output
-            if len(lines) >= 1 and lines[0] != "(null)":
-                metadata["install_date"] = lines[0].strip()
-            if len(lines) >= 2 and lines[1] != "(null)":
-                metadata["last_opened"] = lines[1].strip()
+            if result.returncode == 0:
+                lines = result.stdout.strip().split("\n")
+                if len(lines) >= 1 and lines[0] != "(null)":
+                    metadata["install_date"] = lines[0].strip()
+                if len(lines) >= 2 and lines[1] != "(null)":
+                    metadata["last_opened"] = lines[1].strip()
         except Exception:
             pass
 
@@ -176,6 +181,28 @@ class AppScanner:
                 pass
 
         return metadata
+
+    @staticmethod
+    def _get_architectures(app_path, plist):
+        """Read supported architectures from the app's main executable."""
+        executable = plist.get("CFBundleExecutable")
+        if not executable:
+            return ["Unknown"]
+
+        executable_path = os.path.join(app_path, "Contents", "MacOS", executable)
+        if not os.path.isfile(executable_path):
+            return ["Unknown"]
+
+        try:
+            result = subprocess.run(
+                ["lipo", "-archs", executable_path],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip().split()
+        except Exception:
+            pass
+        return ["Unknown"]
 
     def _detect_install_source(self, app_path, bundle_id):
         """Detect how an app was installed."""

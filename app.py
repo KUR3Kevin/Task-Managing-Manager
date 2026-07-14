@@ -123,17 +123,29 @@ ALLOWED_APP_DIRS = [
     "/System/Applications",
 ]
 
+
+def is_allowed_app_path(app_path):
+    """Return whether an app resolves inside one of the managed app folders."""
+    real_path = os.path.realpath(app_path)
+    for directory in ALLOWED_APP_DIRS:
+        allowed_dir = os.path.realpath(directory)
+        try:
+            if os.path.commonpath([real_path, allowed_dir]) == allowed_dir:
+                return True
+        except ValueError:
+            continue
+    return False
+
 @app.route("/api/launch", methods=["POST"])
 def api_launch():
     """Launch an application."""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     app_path = data.get("path", "")
     if not app_path or not os.path.exists(app_path):
         return jsonify({"success": False, "message": "Invalid app path"}), 400
     if not app_path.endswith(".app"):
         return jsonify({"success": False, "message": "Only .app bundles can be launched"}), 400
-    real_path = os.path.realpath(app_path)
-    if not any(real_path.startswith(os.path.realpath(d)) for d in ALLOWED_APP_DIRS):
+    if not is_allowed_app_path(app_path):
         return jsonify({"success": False, "message": "App path is outside allowed directories"}), 400
     result = monitor.launch_app(app_path)
     return jsonify(result)
@@ -142,7 +154,7 @@ def api_launch():
 @app.route("/api/quit", methods=["POST"])
 def api_quit():
     """Force quit a process."""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     pid = data.get("pid")
     force = data.get("force", True)
     if not pid:
@@ -215,7 +227,7 @@ def api_running_apps_detailed():
 @app.route("/api/quit-by-name", methods=["POST"])
 def api_quit_by_name():
     """Gracefully quit an app by name (AppleScript)."""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     name = data.get("name", "")
     if not name:
         return jsonify({"success": False, "message": "App name required"}), 400

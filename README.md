@@ -17,7 +17,7 @@ A lightweight macOS application and process manager built for the 2018 Mac Mini.
 ## Requirements
 
 - macOS 10.14+ (optimized for 2018 Mac Mini)
-- Python 3.8+
+- Python 3.10+
 - pip
 
 ## Quick Start
