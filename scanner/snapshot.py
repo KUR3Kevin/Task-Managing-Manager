@@ -121,8 +121,12 @@ class SnapshotManager:
 
     def delete_snapshot(self, filename):
         """Delete a specific snapshot."""
+        if (os.path.basename(filename) != filename or
+                not filename.startswith("snapshot_") or
+                not filename.endswith(".json")):
+            return False
         filepath = os.path.join(self.snapshot_dir, filename)
-        if os.path.exists(filepath):
+        if os.path.isfile(filepath):
             os.remove(filepath)
             return True
         return False

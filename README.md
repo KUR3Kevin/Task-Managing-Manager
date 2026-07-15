@@ -17,14 +17,14 @@ A lightweight macOS application and process manager built for the 2018 Mac Mini.
 ## Requirements
 
 - macOS 10.14+ (optimized for 2018 Mac Mini)
-- Python 3.8+
+- Python 3.10+
 - pip
 
 ## Quick Start
 
 ```bash
 # Clone the repo
-git clone https://github.com/YOUR_USERNAME/Task-Managing-Manager.git
+git clone https://github.com/KUR3Kevin/Task-Managing-Manager.git
 cd Task-Managing-Manager
 
 # Create virtual environment (recommended)

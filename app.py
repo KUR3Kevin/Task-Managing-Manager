@@ -168,6 +168,20 @@ ALLOWED_APP_DIRS = [
     "/System/Applications",
 ]
 
+
+def is_allowed_app_path(app_path):
+    """Return whether an app resolves inside one of the managed app folders."""
+    real_path = os.path.realpath(app_path)
+    for directory in ALLOWED_APP_DIRS:
+        allowed_dir = os.path.realpath(directory)
+        try:
+            if os.path.commonpath([real_path, allowed_dir]) == allowed_dir:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 @app.route("/api/launch", methods=["POST"])
 @rate_limit(10, 60)
 def api_launch():
@@ -180,8 +194,7 @@ def api_launch():
         return jsonify({"success": False, "message": "Invalid app path"}), 400
     if not app_path.endswith(".app"):
         return jsonify({"success": False, "message": "Only .app bundles can be launched"}), 400
-    real_path = os.path.realpath(app_path)
-    if not any(real_path.startswith(os.path.realpath(d)) for d in ALLOWED_APP_DIRS):
+    if not is_allowed_app_path(app_path):
         return jsonify({"success": False, "message": "App path is outside allowed directories"}), 400
     result = monitor.launch_app(app_path)
     return jsonify(result)

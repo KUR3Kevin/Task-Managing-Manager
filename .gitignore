@@ -12,3 +12,7 @@ snapshots/*.json
 .idea/
 .vscode/
 *.log
+
+# Stale macOS duplicate copies (the canonical files have no " 2" suffix)
+app 2.py
+scanner/process_monitor 2.py
