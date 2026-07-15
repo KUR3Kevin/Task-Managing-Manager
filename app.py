@@ -8,6 +8,7 @@ import threading
 import time
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
+from functools import wraps
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -18,12 +19,23 @@ from scanner.pkg_history import PkgHistory
 from scanner.snapshot import SnapshotManager
 
 app = Flask(__name__)
-_secret = os.environ.get('SECRET_KEY')
-if not _secret:
+# Security: Require a real secret key; refuse to start with the insecure default
+_secret_key = os.environ.get('FLASK_SECRET_KEY', '')
+_default_key = 'dev-key-please-change-in-production-12345'
+if not _secret_key or _secret_key == _default_key:
     import secrets as _secrets
-    _secret = _secrets.token_hex(32)
-app.config['SECRET_KEY'] = _secret
-socketio = SocketIO(app, cors_allowed_origins="http://127.0.0.1:5050", async_mode='threading')
+    _secret_key = _secrets.token_urlsafe(32)
+    print(
+        "\n[SECURITY WARNING] FLASK_SECRET_KEY not set or is default. "
+        "A random key was generated for this session only.\n"
+        "Sessions will NOT persist across restarts. Set a fixed key:\n"
+        f"  export FLASK_SECRET_KEY='{_secret_key}'\n"
+    )
+app.config['SECRET_KEY'] = _secret_key
+
+# Security: Restrict CORS origins to prevent Cross-Site WebSocket Hijacking
+allowed_origins = ["http://127.0.0.1:5050", "http://localhost:5050"]
+socketio = SocketIO(app, cors_allowed_origins=allowed_origins, async_mode='threading')
 
 # Initialize scanner modules
 scanner = AppScanner()
@@ -35,7 +47,29 @@ snapshots = SnapshotManager(snapshot_dir)
 
 # Cache for apps (scanning is slow)
 app_cache = {"apps": [], "last_scan": 0}
+app_cache_lock = threading.Lock()
 CACHE_TTL = 60  # seconds
+
+# Simple in-memory rate limiter (per-IP, resets each window)
+_rate_store = {}
+def rate_limit(max_calls, window_seconds):
+    """Decorator: limit an endpoint to max_calls per window_seconds per IP."""
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            ip = request.remote_addr or 'unknown'
+            now = time.time()
+            bucket = _rate_store.setdefault(f.__name__, {})
+            calls, window_start = bucket.get(ip, (0, now))
+            if now - window_start > window_seconds:
+                calls, window_start = 0, now
+            calls += 1
+            bucket[ip] = (calls, window_start)
+            if calls > max_calls:
+                return jsonify({"error": "Too many requests"}), 429
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
 
 # Background monitoring flag
 monitoring_active = False
@@ -44,9 +78,18 @@ monitoring_active = False
 def get_cached_apps(force=False):
     """Get apps from cache or scan if stale."""
     now = time.time()
-    if force or not app_cache["apps"] or (now - app_cache["last_scan"]) > CACHE_TTL:
-        app_cache["apps"] = scanner.scan_all_apps()
-        app_cache["last_scan"] = now
+    cache_stale = not app_cache["apps"] or (now - app_cache["last_scan"]) > CACHE_TTL
+    if force or cache_stale:
+        with app_cache_lock:
+            # Another request may have refreshed the cache while this one waited.
+            now = time.time()
+            cache_stale = (
+                not app_cache["apps"]
+                or (now - app_cache["last_scan"]) > CACHE_TTL
+            )
+            if force or cache_stale:
+                app_cache["apps"] = scanner.scan_all_apps()
+                app_cache["last_scan"] = time.time()
     return app_cache["apps"]
 
 
@@ -60,6 +103,7 @@ def index():
 # --- API Endpoints ---
 
 @app.route("/api/apps")
+@rate_limit(30, 60)
 def api_apps():
     """Get all installed applications."""
     force = request.args.get("force", "false").lower() == "true"
@@ -93,6 +137,7 @@ def api_app_sources():
 
 
 @app.route("/api/processes")
+@rate_limit(30, 60)
 def api_processes():
     """Get all running processes."""
     procs = monitor.get_all_processes()
@@ -124,9 +169,12 @@ ALLOWED_APP_DIRS = [
 ]
 
 @app.route("/api/launch", methods=["POST"])
+@rate_limit(10, 60)
 def api_launch():
     """Launch an application."""
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "message": "JSON body required"}), 400
     app_path = data.get("path", "")
     if not app_path or not os.path.exists(app_path):
         return jsonify({"success": False, "message": "Invalid app path"}), 400
@@ -142,15 +190,21 @@ def api_launch():
 @app.route("/api/quit", methods=["POST"])
 def api_quit():
     """Force quit a process."""
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "message": "JSON body required"}), 400
     pid = data.get("pid")
     force = data.get("force", True)
-    if not pid:
-        return jsonify({"success": False, "message": "PID required"}), 400
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "Valid PID required"}), 400
+    if pid <= 0:
+        return jsonify({"success": False, "message": "Valid PID required"}), 400
     if force:
-        result = monitor.force_quit_app(int(pid))
+        result = monitor.force_quit_app(pid)
     else:
-        result = monitor.graceful_quit_app(int(pid))
+        result = monitor.graceful_quit_app(pid)
     return jsonify(result)
 
 
@@ -215,7 +269,9 @@ def api_running_apps_detailed():
 @app.route("/api/quit-by-name", methods=["POST"])
 def api_quit_by_name():
     """Gracefully quit an app by name (AppleScript)."""
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "message": "JSON body required"}), 400
     name = data.get("name", "")
     if not name:
         return jsonify({"success": False, "message": "App name required"}), 400
@@ -238,12 +294,19 @@ def handle_start_monitoring():
     monitoring_active = True
 
     def monitor_loop():
+        # Prime CPU measurements so the first real reading is accurate.
+        # psutil returns 0.0 on the very first cpu_percent() call per process
+        # because there's no prior time reference.  After a 1-second sleep the
+        # next call uses elapsed wall-clock time and gives correct values.
+        monitor.prime_cpu_measurements()
+        time.sleep(1.0)
+
         while monitoring_active:
             try:
                 stats = monitor.get_system_stats()
                 procs = monitor.get_all_processes()
-                # Send top 50 processes by CPU
-                top_procs = sorted(procs, key=lambda x: x['cpu_percent'], reverse=True)[:50]
+                # Send top 100 processes by CPU
+                top_procs = sorted(procs, key=lambda x: x['cpu_percent'], reverse=True)[:100]
                 socketio.emit('system_update', {
                     'stats': stats,
                     'top_processes': top_procs,

@@ -1,12 +1,13 @@
-// === Task Managing Manager - Frontend ===
+// === Task Managing Manager – Frontend ===
 
 const API = '';
 let socket = null;
 let currentView = 'apps';
 let allApps = [];
+let appsLoaded = false;
 let allProcesses = [];
 let runningAppNames = [];
-let runningAppsDetailed = {}; // name -> {pid, memory_mb, cpu_percent}
+let runningAppsDetailed = {};   // name (lower) -> { pid, memory_mb, cpu_percent }
 let sourceFilter = '';
 let processSort = { key: 'cpu_percent', dir: 'desc' };
 let monitoringActive = false;
@@ -20,13 +21,32 @@ document.addEventListener('DOMContentLoaded', () => {
     bindEvents();
 });
 
-// === Socket.IO ===
+// ============================================================
+//  Socket.IO  –  with automatic reconnect
+// ============================================================
 function initSocket() {
-    socket = io();
+    socket = io({
+        reconnection:        true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay:   1500,
+        reconnectionDelayMax: 8000,
+    });
 
     socket.on('connect', () => {
         console.log('Connected to server');
-        showToast('Connected to Task Managing Manager', 'info');
+        setLiveBadge(true);
+        // Re-start monitoring after a reconnect
+        monitoringActive = false;
+        startMonitoring();
+    });
+
+    socket.on('disconnect', () => {
+        setLiveBadge(false);
+        monitoringActive = false;
+    });
+
+    socket.on('reconnect_attempt', () => {
+        setLiveBadge(false);
     });
 
     socket.on('system_update', (data) => {
@@ -34,15 +54,30 @@ function initSocket() {
         if (currentView === 'processes') {
             renderProcesses(data.top_processes, data.total_processes);
         }
+        // Keep a copy for the process view
+        allProcesses = data.top_processes;
+        document.getElementById('processCount').textContent = data.total_processes;
     });
 
-    socket.on('disconnect', () => {
-        console.log('Disconnected');
+    socket.on('monitor_error', (data) => {
+        console.warn('Monitor error:', data.error);
     });
 }
 
+function setLiveBadge(online) {
+    const badge = document.getElementById('liveBadge');
+    if (!badge) return;
+    if (online) {
+        badge.classList.remove('offline');
+        badge.lastChild.textContent = ' Live';
+    } else {
+        badge.classList.add('offline');
+        badge.lastChild.textContent = ' Reconnecting…';
+    }
+}
+
 function startMonitoring() {
-    if (!monitoringActive) {
+    if (!monitoringActive && socket && socket.connected) {
         socket.emit('start_monitoring');
         monitoringActive = true;
     }
@@ -55,31 +90,30 @@ function stopMonitoring() {
     }
 }
 
-// === Navigation ===
+// ============================================================
+//  Navigation & events
+// ============================================================
 function bindEvents() {
-    // Nav items
     document.querySelectorAll('.nav-item[data-view]').forEach(el => {
-        el.addEventListener('click', () => {
-            switchView(el.dataset.view);
-        });
+        el.addEventListener('click', () => switchView(el.dataset.view));
     });
 
-    // Search
     document.getElementById('searchInput').addEventListener('input', debounce(() => {
-        if (currentView === 'apps') filterAndRenderApps();
+        if (currentView === 'apps')      filterAndRenderApps();
         else if (currentView === 'processes') loadProcesses();
-    }, 300));
+    }, 280));
 
-    // Start monitoring immediately
+    // Start real-time monitoring
     startMonitoring();
-
-    // Also load initial system stats
     loadSystemStats();
 
-    // Auto-refresh running apps every 5 seconds
+    // Refresh running-apps list every 5 s so status badges stay fresh
     setInterval(() => {
         loadRunningApps().then(() => {
-            if (currentView === 'apps') filterAndRenderApps();
+            if (currentView === 'apps' && appsLoaded) {
+                filterAndRenderApps();
+                renderRunningStrip();
+            }
         });
     }, 5000);
 }
@@ -87,40 +121,41 @@ function bindEvents() {
 function switchView(view) {
     currentView = view;
 
-    // Update nav
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
     document.querySelector(`.nav-item[data-view="${view}"]`)?.classList.add('active');
 
-    // Update content
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
     document.getElementById(`view-${view}`)?.classList.add('active');
 
-    // Update search placeholder
     const search = document.getElementById('searchInput');
-    if (view === 'apps') search.placeholder = 'Search apps by name, bundle ID, or path...';
-    else if (view === 'processes') search.placeholder = 'Search processes by name or command...';
-    else if (view === 'packages') search.placeholder = 'Search package IDs...';
-    else search.placeholder = 'Search...';
+    if      (view === 'apps')      search.placeholder = 'Search apps by name, bundle ID, or path…';
+    else if (view === 'processes') search.placeholder = 'Search processes by name or command…';
+    else if (view === 'packages')  search.placeholder = 'Search package IDs…';
+    else                           search.placeholder = 'Search…';
 
-    // Load data for view
-    if (view === 'processes') loadProcesses();
-    else if (view === 'packages') loadPackages();
-    else if (view === 'snapshots') loadSnapshots();
-    else if (view === 'removed') loadRemoved();
+    if      (view === 'processes') renderProcesses(allProcesses, allProcesses.length);
+    else if (view === 'packages')  loadPackages();
+    else if (view === 'removed')   loadRemoved();
 }
 
-// === Apps ===
+// ============================================================
+//  Apps
+// ============================================================
 async function loadApps(force = false) {
     const container = document.getElementById('appGrid');
-    container.innerHTML = '<div class="loading"><div class="spinner"></div>Scanning applications...</div>';
+    appsLoaded = false;
+    container.innerHTML = '<div class="loading"><div class="spinner"></div>Scanning applications…</div>';
 
     try {
         const res = await fetch(`${API}/api/apps?force=${force}`);
         const data = await res.json();
         allApps = data.apps;
+        appsLoaded = true;
         document.getElementById('appCount').textContent = data.total;
         filterAndRenderApps();
+        renderRunningStrip();
     } catch (err) {
+        appsLoaded = false;
         container.innerHTML = '<div class="empty-state">Failed to load apps. Is the server running?</div>';
     }
 }
@@ -140,6 +175,31 @@ async function loadRunningApps() {
     }
 }
 
+function renderRunningStrip() {
+    const strip = document.getElementById('runningStrip');
+    if (!strip) return;
+
+    if (runningAppNames.length === 0) {
+        strip.style.display = 'none';
+        return;
+    }
+
+    strip.style.display = 'flex';
+    const label = strip.querySelector('.running-strip-label') || '';
+
+    // Build chips (sorted alphabetically)
+    const sorted = [...runningAppNames].sort();
+    const chips = sorted.map(name => {
+        const display = runningAppsDetailed[name]?.name || name;
+        return `<div class="running-chip" title="${escHtml(display)}">
+            <span class="running-chip-dot"></span>
+            ${escHtml(display)}
+        </div>`;
+    }).join('');
+
+    strip.innerHTML = `<span class="running-strip-label">Active</span>${chips}`;
+}
+
 function filterAndRenderApps() {
     const search = document.getElementById('searchInput').value.toLowerCase();
     let filtered = allApps;
@@ -155,7 +215,8 @@ function filterAndRenderApps() {
         );
     }
 
-    document.getElementById('filteredCount').textContent = `${filtered.length} of ${allApps.length}`;
+    document.getElementById('filteredCount').textContent =
+        `${filtered.length} of ${allApps.length}`;
     renderAppGrid(filtered);
 }
 
@@ -167,23 +228,23 @@ function renderAppGrid(apps) {
         return;
     }
 
-    // Protected apps that should not be quit
     const protectedApps = ['finder'];
 
     container.innerHTML = apps.map(app => {
-        const initial = app.name.charAt(0).toUpperCase();
-        const isRunning = runningAppNames.includes(app.name.toLowerCase());
-        const isProtected = protectedApps.includes(app.name.toLowerCase());
+        const initial     = app.name.charAt(0).toUpperCase();
+        const key         = app.name.toLowerCase();
+        const isRunning   = runningAppNames.includes(key);
+        const isProtected = protectedApps.includes(key);
         const sourceClass = getSourceClass(app.install_source);
-        const runInfo = runningAppsDetailed[app.name.toLowerCase()];
+        const runInfo     = runningAppsDetailed[key];
 
         let actionButtons = '';
         if (isRunning && !isProtected) {
             actionButtons = `
-                <button class="btn" onclick="event.stopPropagation(); gracefulQuitApp('${escHtml(app.name)}')" title="Quit normally">Quit</button>
+                <button class="btn"        onclick="event.stopPropagation(); gracefulQuitApp('${escHtml(app.name)}')" title="Quit">Quit</button>
                 <button class="btn danger" onclick="event.stopPropagation(); forceQuitByName('${escHtml(app.name)}')" title="Force Quit">Force</button>`;
         } else if (isRunning && isProtected) {
-            actionButtons = `<span style="color:var(--text-muted);font-size:11px">System</span>`;
+            actionButtons = `<span style="color:var(--text-muted);font-size:10px;font-weight:600">System</span>`;
         } else {
             actionButtons = `<button class="btn success" onclick="event.stopPropagation(); launchApp('${escHtml(app.path)}')" title="Launch">Open</button>`;
         }
@@ -198,8 +259,8 @@ function renderAppGrid(apps) {
                         <span class="source-tag ${sourceClass}">${escHtml(app.install_source)}</span>
                         <span>${escHtml(app.version)}</span>
                         <span>${escHtml(app.size_human)}</span>
-                        ${isRunning ? '<span style="color:var(--silver)">Running</span>' : ''}
-                        ${runInfo ? `<span>${runInfo.memory_mb} MB</span>` : ''}
+                        ${isRunning ? '<span class="running-tag">Running</span>' : ''}
+                        ${runInfo ? `<span style="color:var(--text-muted)">${runInfo.memory_mb} MB</span>` : ''}
                     </div>
                 </div>
                 <div class="app-card-actions">
@@ -209,21 +270,41 @@ function renderAppGrid(apps) {
     }).join('');
 }
 
-// === App Detail ===
+// ============================================================
+//  App Detail panel
+// ============================================================
 function showAppDetail(app) {
-    const panel = document.getElementById('detailPanel');
-    const isRunning = runningAppNames.includes(app.name.toLowerCase());
+    const panel    = document.getElementById('detailPanel');
+    const key      = app.name.toLowerCase();
+    const isRunning = runningAppNames.includes(key);
+    const runInfo   = runningAppsDetailed[key];
 
     document.getElementById('detailContent').innerHTML = `
         <div class="detail-header">
             <div>
-                <h2 style="font-size:16px;margin-bottom:4px">${escHtml(app.name)}</h2>
-                <div style="font-size:11px;color:var(--text-muted)">${escHtml(app.bundle_id)}</div>
-                ${isRunning ? '<div style="color:var(--silver);font-size:11px;margin-top:4px">Running</div>' : ''}
+                <h2 style="font-size:15px;margin-bottom:4px;letter-spacing:-0.02em">${escHtml(app.name)}</h2>
+                <div style="font-size:11px;color:var(--text-muted);font-family:monospace">${escHtml(app.bundle_id)}</div>
+                ${isRunning ? '<div style="color:var(--green);font-size:10.5px;margin-top:5px;font-weight:700">● Running</div>' : ''}
             </div>
             <button class="detail-close" onclick="closeDetail()">&times;</button>
         </div>
         <div class="detail-body">
+            ${isRunning && runInfo ? `
+            <div style="display:flex;gap:14px;margin-bottom:16px;padding:12px;background:var(--green-dim);border:1px solid var(--border-green);border-radius:var(--radius-sm)">
+                <div style="text-align:center">
+                    <div style="font-size:18px;font-weight:700;color:var(--green);font-variant-numeric:tabular-nums">${runInfo.cpu_percent.toFixed(1)}%</div>
+                    <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em">CPU</div>
+                </div>
+                <div style="text-align:center">
+                    <div style="font-size:18px;font-weight:700;color:var(--cyan);font-variant-numeric:tabular-nums">${runInfo.memory_mb}</div>
+                    <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em">MB</div>
+                </div>
+                <div style="text-align:center">
+                    <div style="font-size:18px;font-weight:700;color:var(--text-secondary);font-variant-numeric:tabular-nums">${runInfo.pid}</div>
+                    <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em">PID</div>
+                </div>
+            </div>` : ''}
+
             <div class="detail-row"><span class="label">Version</span><span class="value">${escHtml(app.version)}${app.build ? ' (' + escHtml(app.build) + ')' : ''}</span></div>
             <div class="detail-row"><span class="label">Install Source</span><span class="value"><span class="source-tag ${getSourceClass(app.install_source)}">${escHtml(app.install_source)}</span></span></div>
             <div class="detail-row"><span class="label">Size</span><span class="value">${escHtml(app.size_human)}</span></div>
@@ -238,9 +319,9 @@ function showAppDetail(app) {
 
             <div class="detail-actions">
                 <button class="btn success" onclick="launchApp('${escHtml(app.path)}')">Open App</button>
-                <button class="btn" onclick="revealInFinder('${escHtml(app.path)}')">Show in Finder</button>
+                <button class="btn"         onclick="revealInFinder('${escHtml(app.path)}')">Show in Finder</button>
                 ${isRunning && app.name.toLowerCase() !== 'finder' ? `
-                    <button class="btn" onclick="gracefulQuitApp('${escHtml(app.name)}')">Quit</button>
+                    <button class="btn"        onclick="gracefulQuitApp('${escHtml(app.name)}')">Quit</button>
                     <button class="btn danger" onclick="forceQuitByName('${escHtml(app.name)}')">Force Quit</button>
                 ` : ''}
             </div>
@@ -253,13 +334,15 @@ function closeDetail() {
     document.getElementById('detailPanel').classList.remove('open');
 }
 
-// === Processes ===
+// ============================================================
+//  Processes
+// ============================================================
 async function loadProcesses() {
     const search = document.getElementById('searchInput').value;
-    const show = document.getElementById('processFilter')?.value || 'all';
+    const show   = document.getElementById('processFilter')?.value || 'all';
 
     try {
-        const res = await fetch(`${API}/api/processes?search=${encodeURIComponent(search)}&show=${show}`);
+        const res  = await fetch(`${API}/api/processes?search=${encodeURIComponent(search)}&show=${show}`);
         const data = await res.json();
         allProcesses = data.processes;
         renderProcesses(allProcesses, data.count);
@@ -272,8 +355,23 @@ function renderProcesses(processes, totalCount) {
     const container = document.getElementById('processTableBody');
     if (!container) return;
 
+    // Apply filter from dropdown
+    const show = document.getElementById('processFilter')?.value || 'all';
+    let visible = processes;
+    if (show === 'apps')   visible = processes.filter(p => p.is_app);
+    if (show === 'system') visible = processes.filter(p => !p.is_app);
+
+    // Apply search
+    const search = document.getElementById('searchInput').value.toLowerCase();
+    if (search) {
+        visible = visible.filter(p =>
+            p.name.toLowerCase().includes(search) ||
+            p.cmdline.toLowerCase().includes(search)
+        );
+    }
+
     // Sort
-    const sorted = [...processes].sort((a, b) => {
+    const sorted = [...visible].sort((a, b) => {
         let va = a[processSort.key];
         let vb = b[processSort.key];
         if (typeof va === 'string') va = va.toLowerCase();
@@ -285,19 +383,33 @@ function renderProcesses(processes, totalCount) {
     document.getElementById('processCount').textContent = totalCount || processes.length;
 
     container.innerHTML = sorted.slice(0, 200).map(p => {
-        const cpuClass = p.cpu_percent > 50 ? 'cpu-high' : p.cpu_percent > 10 ? 'cpu-med' : '';
-        const memClass = p.memory_mb > 500 ? 'mem-high' : '';
-        const statusClass = p.status === 'running' ? 'running' : p.status === 'zombie' ? 'zombie' : 'sleeping';
+        const cpuClass   = p.cpu_percent > 50 ? 'cpu-high' : p.cpu_percent > 10 ? 'cpu-med' : 'cpu-low';
+        const memClass   = p.memory_mb > 500 ? 'mem-high' : '';
+        const statusCls  = p.status === 'running' ? 'running' : p.status === 'zombie' ? 'zombie' : 'sleeping';
+        const cpuWidth   = Math.min(p.cpu_percent, 100).toFixed(1);
 
-        return `<tr>
+        return `<tr class="${p.is_app ? 'is-app' : ''}">
             <td class="pid">${p.pid}</td>
-            <td><div class="process-name-cell"><span class="status-dot ${statusClass}"></span><span>${escHtml(p.name)}</span></div></td>
-            <td class="${cpuClass}">${p.cpu_percent.toFixed(1)}%</td>
+            <td>
+                <div class="process-name-cell">
+                    <span class="status-dot ${statusCls}"></span>
+                    <span>${escHtml(p.name)}</span>
+                </div>
+            </td>
+            <td>
+                <div class="cpu-cell ${cpuClass}">
+                    <span class="cpu-val">${p.cpu_percent.toFixed(1)}%</span>
+                    <div class="cpu-mini-bar">
+                        <div class="cpu-mini-fill" style="width:${cpuWidth}%"></div>
+                    </div>
+                </div>
+            </td>
             <td class="${memClass}">${p.memory_mb.toFixed(1)} MB</td>
             <td>${escHtml(p.username)}</td>
             <td>${escHtml(p.status)}</td>
             <td>
-                <button class="btn danger" onclick="forceQuit(${p.pid})" style="padding:2px 8px;font-size:10px">Kill</button>
+                <button class="btn danger" onclick="forceQuit(${p.pid})"
+                        style="padding:3px 9px;font-size:10px">Kill</button>
             </td>
         </tr>`;
     }).join('');
@@ -313,20 +425,20 @@ function sortProcesses(key) {
     renderProcesses(allProcesses, allProcesses.length);
 }
 
-// === Packages ===
+// ============================================================
+//  Packages
+// ============================================================
 async function loadPackages() {
     const container = document.getElementById('pkgList');
-    container.innerHTML = '<div class="loading"><div class="spinner"></div>Loading package receipts...</div>';
+    container.innerHTML = '<div class="loading"><div class="spinner"></div>Loading package receipts…</div>';
 
     try {
-        const res = await fetch(`${API}/api/pkg-history`);
+        const res  = await fetch(`${API}/api/pkg-history`);
         const data = await res.json();
         const search = document.getElementById('searchInput').value.toLowerCase();
 
         let receipts = data.receipts;
-        if (search) {
-            receipts = receipts.filter(r => r.pkg_id.toLowerCase().includes(search));
-        }
+        if (search) receipts = receipts.filter(r => r.pkg_id.toLowerCase().includes(search));
 
         document.getElementById('pkgCount').textContent = data.count;
 
@@ -348,17 +460,19 @@ async function loadPackages() {
     }
 }
 
-// === Removed ===
+// ============================================================
+//  Removed pkgs
+// ============================================================
 async function loadRemoved() {
     const container = document.getElementById('removedList');
-    container.innerHTML = '<div class="loading"><div class="spinner"></div>Checking for removed packages...</div>';
+    container.innerHTML = '<div class="loading"><div class="spinner"></div>Checking for removed packages…</div>';
 
     try {
-        const res = await fetch(`${API}/api/pkg-removed`);
+        const res  = await fetch(`${API}/api/pkg-removed`);
         const data = await res.json();
 
         if (data.removed.length === 0) {
-            container.innerHTML = '<div class="empty-state">No removed packages detected. All installed packages have their files intact.</div>';
+            container.innerHTML = '<div class="empty-state">No removed packages detected. All receipts have files intact.</div>';
             return;
         }
 
@@ -373,107 +487,12 @@ async function loadRemoved() {
     }
 }
 
-// === Snapshots ===
-async function loadSnapshots() {
-    const container = document.getElementById('snapshotList');
-
-    try {
-        const res = await fetch(`${API}/api/snapshots`);
-        const data = await res.json();
-
-        if (data.snapshots.length === 0) {
-            container.innerHTML = '<div class="empty-state">No snapshots yet. Take one to start tracking changes.</div>';
-        } else {
-            container.innerHTML = '<div class="snapshot-cards">' + data.snapshots.map(s => `
-                <div class="snapshot-card">
-                    <h4>${escHtml(s.filename)}</h4>
-                    <div class="meta">${escHtml(s.timestamp)} &middot; ${s.app_count} apps</div>
-                    <button class="btn danger" onclick="deleteSnapshot('${escHtml(s.filename)}')" style="font-size:10px;padding:3px 8px">Delete</button>
-                </div>
-            `).join('') + '</div>';
-        }
-
-        // Load comparison
-        loadSnapshotComparison();
-    } catch (err) {
-        container.innerHTML = '<div class="empty-state">Failed to load snapshots.</div>';
-    }
-}
-
-async function saveSnapshot() {
-    try {
-        const res = await fetch(`${API}/api/snapshots/save`, { method: 'POST' });
-        const data = await res.json();
-        showToast(`Snapshot saved: ${data.app_count} apps captured`, 'success');
-        loadSnapshots();
-    } catch (err) {
-        showToast('Failed to save snapshot', 'error');
-    }
-}
-
-async function deleteSnapshot(filename) {
-    try {
-        await fetch(`${API}/api/snapshots/${filename}`, { method: 'DELETE' });
-        showToast('Snapshot deleted', 'info');
-        loadSnapshots();
-    } catch (err) {
-        showToast('Failed to delete snapshot', 'error');
-    }
-}
-
-async function loadSnapshotComparison() {
-    const container = document.getElementById('snapshotComparison');
-
-    try {
-        const res = await fetch(`${API}/api/snapshots/compare`);
-        const data = await res.json();
-
-        if (!data.has_previous) {
-            container.innerHTML = '<div class="empty-state">Save at least one snapshot to start comparing.</div>';
-            return;
-        }
-
-        let html = `
-            <div style="margin-bottom:12px;font-size:12px;color:var(--text-secondary)">
-                Comparing with snapshot from ${escHtml(data.snapshot_date)}<br>
-                Previous: ${data.previous_count} apps &rarr; Current: ${data.current_count} apps
-            </div>
-            <div style="display:flex;gap:8px;margin-bottom:12px">
-                <span class="diff-badge added">+${data.added_count} Added</span>
-                <span class="diff-badge removed">-${data.removed_count} Removed</span>
-                <span class="diff-badge updated">${data.updated_count} Updated</span>
-            </div>`;
-
-        if (data.added.length > 0) {
-            html += '<h4 style="font-size:12px;margin:12px 0 6px;color:var(--silver)">Added Apps</h4><div class="diff-list">';
-            html += data.added.map(a => `<div class="diff-item added">+ ${escHtml(a.name)} (${escHtml(a.install_source)})</div>`).join('');
-            html += '</div>';
-        }
-        if (data.removed.length > 0) {
-            html += '<h4 style="font-size:12px;margin:12px 0 6px;color:var(--red)">Removed Apps</h4><div class="diff-list">';
-            html += data.removed.map(a => `<div class="diff-item removed">- ${escHtml(a.name)}</div>`).join('');
-            html += '</div>';
-        }
-        if (data.updated.length > 0) {
-            html += '<h4 style="font-size:12px;margin:12px 0 6px;color:var(--tan)">Updated Apps</h4><div class="diff-list">';
-            html += data.updated.map(a => `<div class="diff-item updated">${escHtml(a.name)}: ${escHtml(a.old_version)} &rarr; ${escHtml(a.new_version)}</div>`).join('');
-            html += '</div>';
-        }
-
-        if (data.added.length === 0 && data.removed.length === 0 && data.updated.length === 0) {
-            html += '<div class="empty-state">No changes since last snapshot.</div>';
-        }
-
-        container.innerHTML = html;
-    } catch (err) {
-        container.innerHTML = '<div class="empty-state">Failed to compare snapshots.</div>';
-    }
-}
-
-// === System Stats ===
+// ============================================================
+//  System Stats
+// ============================================================
 async function loadSystemStats() {
     try {
-        const res = await fetch(`${API}/api/system`);
+        const res  = await fetch(`${API}/api/system`);
         const data = await res.json();
         updateSystemStats(data);
     } catch (err) {
@@ -483,49 +502,60 @@ async function loadSystemStats() {
 
 function updateSystemStats(stats) {
     // CPU
-    const cpuBar = document.getElementById('cpuBar');
+    const cpuBar  = document.getElementById('cpuBar');
     const cpuText = document.getElementById('cpuText');
     if (cpuBar && cpuText) {
-        cpuBar.style.width = stats.cpu_percent + '%';
-        cpuBar.className = 'stat-bar-fill cpu' + (stats.cpu_percent > 80 ? ' high' : '');
-        cpuText.textContent = stats.cpu_percent.toFixed(0) + '%';
+        const cpu = stats.cpu_percent;
+        cpuBar.style.width = cpu + '%';
+        cpuBar.className = 'stat-bar-fill cpu' +
+            (cpu > 90 ? ' critical' : cpu > 70 ? ' high' : '');
+        cpuText.textContent = cpu.toFixed(0) + '%';
     }
 
     // Memory
-    const memBar = document.getElementById('memBar');
+    const memBar  = document.getElementById('memBar');
     const memText = document.getElementById('memText');
     if (memBar && memText) {
-        memBar.style.width = stats.memory_percent + '%';
-        memBar.className = 'stat-bar-fill mem' + (stats.memory_percent > 80 ? ' high' : '');
-        memText.textContent = stats.memory_percent.toFixed(0) + '%';
+        const mem = stats.memory_percent;
+        memBar.style.width = mem + '%';
+        memBar.className = 'stat-bar-fill mem' +
+            (mem > 90 ? ' critical' : mem > 75 ? ' high' : '');
+        memText.textContent = mem.toFixed(0) + '%';
     }
 
     // Disk
-    const diskBar = document.getElementById('diskBar');
+    const diskBar  = document.getElementById('diskBar');
     const diskText = document.getElementById('diskText');
     if (diskBar && diskText) {
-        diskBar.style.width = stats.disk_percent + '%';
-        diskBar.className = 'stat-bar-fill disk' + (stats.disk_percent > 90 ? ' high' : '');
-        diskText.textContent = stats.disk_percent.toFixed(0) + '%';
+        const disk = stats.disk_percent;
+        diskBar.style.width = disk + '%';
+        diskBar.className = 'stat-bar-fill disk' +
+            (disk > 95 ? ' critical' : disk > 85 ? ' high' : '');
+        diskText.textContent = disk.toFixed(0) + '%';
     }
 
     // Process count
-    const procCountEl = document.getElementById('totalProcessCount');
-    if (procCountEl) procCountEl.textContent = stats.process_count;
+    const procEl = document.getElementById('totalProcessCount');
+    if (procEl) procEl.textContent = stats.process_count;
 }
 
-// === Actions ===
+// ============================================================
+//  App actions
+// ============================================================
 async function launchApp(path) {
     try {
-        const res = await fetch(`${API}/api/launch`, {
+        const res  = await fetch(`${API}/api/launch`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path })
+            body: JSON.stringify({ path }),
         });
         const data = await res.json();
         showToast(data.message, data.success ? 'success' : 'error');
         if (data.success) {
-            setTimeout(() => loadRunningApps().then(filterAndRenderApps), 2000);
+            setTimeout(() => loadRunningApps().then(() => {
+                filterAndRenderApps();
+                renderRunningStrip();
+            }), 2000);
         }
     } catch (err) {
         showToast('Failed to launch app', 'error');
@@ -534,17 +564,19 @@ async function launchApp(path) {
 
 async function forceQuit(pid) {
     try {
-        const res = await fetch(`${API}/api/quit`, {
+        const res  = await fetch(`${API}/api/quit`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pid, force: true })
+            body: JSON.stringify({ pid, force: true }),
         });
         const data = await res.json();
         showToast(data.message, data.success ? 'success' : 'error');
         if (data.success) {
             setTimeout(() => {
-                loadRunningApps().then(filterAndRenderApps);
-                if (currentView === 'processes') loadProcesses();
+                loadRunningApps().then(() => {
+                    filterAndRenderApps();
+                    renderRunningStrip();
+                });
             }, 1000);
         }
     } catch (err) {
@@ -553,9 +585,8 @@ async function forceQuit(pid) {
 }
 
 async function quitAppByName(appName) {
-    // Find the process by app name
     try {
-        const res = await fetch(`${API}/api/processes?search=${encodeURIComponent(appName)}&show=apps`);
+        const res  = await fetch(`${API}/api/processes?search=${encodeURIComponent(appName)}&show=apps`);
         const data = await res.json();
         if (data.processes.length > 0) {
             forceQuit(data.processes[0].pid);
@@ -569,15 +600,18 @@ async function quitAppByName(appName) {
 
 async function gracefulQuitApp(appName) {
     try {
-        const res = await fetch(`${API}/api/quit-by-name`, {
+        const res  = await fetch(`${API}/api/quit-by-name`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: appName })
+            body: JSON.stringify({ name: appName }),
         });
         const data = await res.json();
         showToast(data.message, data.success ? 'success' : 'error');
         if (data.success) {
-            setTimeout(() => loadRunningApps().then(filterAndRenderApps), 2000);
+            setTimeout(() => loadRunningApps().then(() => {
+                filterAndRenderApps();
+                renderRunningStrip();
+            }), 2000);
         }
     } catch (err) {
         showToast('Failed to quit app', 'error');
@@ -594,14 +628,6 @@ async function forceQuitByName(appName) {
 }
 
 async function revealInFinder(path) {
-    try {
-        await fetch(`${API}/api/launch`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: path, reveal: true })
-        });
-    } catch (err) {}
-    // Fallback: just open the parent directory
     const dir = path.substring(0, path.lastIndexOf('/'));
     launchApp(dir);
 }
@@ -612,10 +638,12 @@ function refreshApps() {
     loadSources();
 }
 
-// === Sources ===
+// ============================================================
+//  Sources
+// ============================================================
 async function loadSources() {
     try {
-        const res = await fetch(`${API}/api/apps/sources`);
+        const res  = await fetch(`${API}/api/apps/sources`);
         const data = await res.json();
         const container = document.getElementById('sourceFilters');
 
@@ -625,7 +653,7 @@ async function loadSources() {
                 const cls = getSourceClass(src);
                 return `<div class="source-item ${sourceFilter === src ? 'active' : ''}"
                              onclick="setSourceFilter('${escHtml(src)}')">
-                    <div style="display:flex;align-items:center;gap:6px">
+                    <div style="display:flex;align-items:center;gap:5px">
                         <span class="source-dot ${cls}"></span>
                         <span>${escHtml(src)}</span>
                     </div>
@@ -641,20 +669,26 @@ function setSourceFilter(src) {
     filterAndRenderApps();
 }
 
-// === Utilities ===
+// ============================================================
+//  Utilities
+// ============================================================
 function escHtml(str) {
     if (!str) return '';
-    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
 }
 
 function getSourceClass(source) {
     if (!source) return 'unknown';
     const s = source.toLowerCase();
     if (s.includes('app store')) return 'app-store';
-    if (s.includes('homebrew')) return 'homebrew';
-    if (s.includes('pkg')) return 'pkg';
+    if (s.includes('homebrew'))  return 'homebrew';
+    if (s.includes('pkg'))       return 'pkg';
     if (s.includes('manual') || s.includes('dmg')) return 'manual';
-    if (s.includes('system')) return 'system';
+    if (s.includes('system'))    return 'system';
     return 'unknown';
 }
 
@@ -668,7 +702,7 @@ function debounce(fn, ms) {
 
 function showToast(msg, type = 'info') {
     const container = document.getElementById('toasts');
-    const toast = document.createElement('div');
+    const toast     = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.textContent = msg;
     container.appendChild(toast);
@@ -678,8 +712,7 @@ function showToast(msg, type = 'info') {
 function humanBytes(bytes) {
     if (!bytes) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let i = 0;
-    let size = bytes;
+    let i = 0, size = bytes;
     while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
     return size.toFixed(1) + ' ' + units[i];
 }

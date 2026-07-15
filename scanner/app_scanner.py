@@ -9,11 +9,20 @@ from datetime import datetime
 class AppScanner:
     """Scans /Applications and ~/Applications for installed apps."""
 
-    SEARCH_DIRS = ["/Applications", os.path.expanduser("~/Applications")]
+    SEARCH_DIRS = [
+        "/Applications",
+        os.path.expanduser("~/Applications"),
+        # Apple system apps live here on macOS Catalina+
+        # (FaceTime, Calendar, Maps, Messages, etc.)
+        "/System/Applications",
+        "/System/Applications/Utilities",
+    ]
 
     def __init__(self):
         self._cache = {}
         self._homebrew_prefix = self._detect_homebrew_prefix()
+        self._homebrew_casks = None
+        self._pkg_receipts = None
 
     def _detect_homebrew_prefix(self):
         """Detect Homebrew installation prefix."""
@@ -26,6 +35,11 @@ class AppScanner:
         """Scan all application directories and return app info list."""
         apps = []
         seen_bundles = set()
+        seen_paths = set()
+
+        # Refresh install-source data once per scan, then reuse it for every app.
+        self._homebrew_casks = None
+        self._pkg_receipts = None
 
         for search_dir in self.SEARCH_DIRS:
             if not os.path.isdir(search_dir):
@@ -33,6 +47,10 @@ class AppScanner:
             for item in os.listdir(search_dir):
                 if item.endswith(".app"):
                     app_path = os.path.join(search_dir, item)
+                    canonical_path = os.path.realpath(app_path)
+                    if canonical_path in seen_paths:
+                        continue
+                    seen_paths.add(canonical_path)
                     info = self._get_app_info(app_path)
                     if info and info["bundle_id"] not in seen_bundles:
                         seen_bundles.add(info["bundle_id"])
@@ -46,6 +64,10 @@ class AppScanner:
                         for item in os.listdir(subdir_path):
                             if item.endswith(".app"):
                                 app_path = os.path.join(subdir_path, item)
+                                canonical_path = os.path.realpath(app_path)
+                                if canonical_path in seen_paths:
+                                    continue
+                                seen_paths.add(canonical_path)
                                 info = self._get_app_info(app_path)
                                 if info and info["bundle_id"] not in seen_bundles:
                                     seen_bundles.add(info["bundle_id"])
@@ -188,27 +210,40 @@ class AppScanner:
         if self._homebrew_prefix:
             cask_dir = os.path.join(self._homebrew_prefix, "Caskroom")
             if os.path.isdir(cask_dir):
+                if self._homebrew_casks is None:
+                    try:
+                        self._homebrew_casks = {cask.lower() for cask in os.listdir(cask_dir)}
+                    except OSError:
+                        self._homebrew_casks = set()
                 app_name = Path(app_path).stem.lower().replace(" ", "-")
-                for cask in os.listdir(cask_dir):
-                    if cask.lower() == app_name:
-                        return "Homebrew Cask"
+                if app_name in self._homebrew_casks:
+                    return "Homebrew Cask"
 
         # Check pkgutil receipts
-        try:
-            result = subprocess.run(
-                ["pkgutil", "--pkgs"],
-                capture_output=True, text=True, timeout=10
-            )
-            if result.returncode == 0:
-                pkgs = result.stdout.strip().split("\n")
-                for pkg in pkgs:
-                    if bundle_id and bundle_id.lower() in pkg.lower():
-                        return ".pkg Installer"
-        except Exception:
-            pass
+        if self._pkg_receipts is None:
+            self._pkg_receipts = []
+            try:
+                result = subprocess.run(
+                    ["pkgutil", "--pkgs"],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    self._pkg_receipts = [
+                        pkg.strip().lower()
+                        for pkg in result.stdout.splitlines()
+                        if pkg.strip()
+                    ]
+            except Exception:
+                pass
+        if bundle_id:
+            bundle_id_lower = bundle_id.lower()
+            if any(bundle_id_lower in pkg for pkg in self._pkg_receipts):
+                return ".pkg Installer"
 
-        # Check if it's a system app
-        if app_path.startswith("/Applications/Utilities") or app_path.startswith("/System"):
+        # Check if it's a system / Apple OS app
+        if (app_path.startswith("/System/Applications")
+                or app_path.startswith("/System/Library")
+                or app_path.startswith("/Applications/Utilities")):
             return "System"
 
         # Default

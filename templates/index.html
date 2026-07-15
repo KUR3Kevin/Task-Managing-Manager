@@ -16,25 +16,37 @@
                     <div class="window-dot minimize"></div>
                     <div class="window-dot maximize"></div>
                 </div>
-                <h1>Task Managing Manager <span>v1.0</span></h1>
+                <div class="titlebar-title">
+                    <h1>Task Managing Manager <span>v1.2</span></h1>
+                    <div class="live-badge" id="liveBadge">
+                        <div class="live-dot"></div>
+                        Live
+                    </div>
+                </div>
             </div>
             <div class="sys-stats">
                 <div class="stat-item">
-                    <span>CPU</span>
-                    <div class="stat-bar"><div class="stat-bar-fill cpu" id="cpuBar" style="width:0%"></div></div>
-                    <span id="cpuText">0%</span>
+                    <span class="stat-label">CPU</span>
+                    <div class="stat-bar">
+                        <div class="stat-bar-fill cpu" id="cpuBar" style="width:0%"></div>
+                    </div>
+                    <span class="stat-value" id="cpuText">0%</span>
                 </div>
                 <div class="stat-item">
-                    <span>MEM</span>
-                    <div class="stat-bar"><div class="stat-bar-fill mem" id="memBar" style="width:0%"></div></div>
-                    <span id="memText">0%</span>
+                    <span class="stat-label">MEM</span>
+                    <div class="stat-bar">
+                        <div class="stat-bar-fill mem" id="memBar" style="width:0%"></div>
+                    </div>
+                    <span class="stat-value" id="memText">0%</span>
                 </div>
                 <div class="stat-item">
-                    <span>DISK</span>
-                    <div class="stat-bar"><div class="stat-bar-fill disk" id="diskBar" style="width:0%"></div></div>
-                    <span id="diskText">0%</span>
+                    <span class="stat-label">DISK</span>
+                    <div class="stat-bar">
+                        <div class="stat-bar-fill disk" id="diskBar" style="width:0%"></div>
+                    </div>
+                    <span class="stat-value" id="diskText">0%</span>
                 </div>
-                <div class="stat-item">
+                <div class="proc-stat">
                     <span id="totalProcessCount">0</span> procs
                 </div>
             </div>
@@ -45,27 +57,23 @@
             <div class="sidebar-section">
                 <h3>Views</h3>
                 <div class="nav-item active" data-view="apps">
-                    <span class="icon">&#9733;</span>
+                    <span class="icon">&#9638;</span>
                     <span>Applications</span>
                     <span class="nav-badge" id="appCount">0</span>
                 </div>
                 <div class="nav-item" data-view="processes">
-                    <span class="icon">&#9881;</span>
+                    <span class="icon">&#8767;</span>
                     <span>Processes</span>
                     <span class="nav-badge" id="processCount">0</span>
                 </div>
                 <div class="nav-item" data-view="packages">
-                    <span class="icon">&#9776;</span>
+                    <span class="icon">&#9633;</span>
                     <span>Pkg Receipts</span>
                     <span class="nav-badge" id="pkgCount">0</span>
                 </div>
                 <div class="nav-item" data-view="removed">
-                    <span class="icon">&#10006;</span>
+                    <span class="icon">&#8722;</span>
                     <span>Removed Pkgs</span>
-                </div>
-                <div class="nav-item" data-view="snapshots">
-                    <span class="icon">&#128247;</span>
-                    <span>Snapshots</span>
                 </div>
             </div>
 
@@ -76,7 +84,7 @@
                 </div>
             </div>
 
-            <div class="sidebar-section" style="padding:0 20px">
+            <div class="sidebar-bottom">
                 <button class="btn primary" onclick="refreshApps()" style="width:100%;justify-content:center">
                     Rescan Apps
                 </button>
@@ -97,6 +105,12 @@
 
             <!-- === Apps View === -->
             <div class="tab-content active" id="view-apps">
+                <!-- Currently Running strip -->
+                <div class="running-strip" id="runningStrip" style="display:none">
+                    <span class="running-strip-label">Active</span>
+                    <!-- Chips populated by JS -->
+                </div>
+
                 <div class="app-grid" id="appGrid">
                     <div class="loading"><div class="spinner"></div>Scanning applications...</div>
                 </div>
@@ -110,7 +124,7 @@
                         <option value="apps">GUI Apps Only</option>
                         <option value="system">System Only</option>
                     </select>
-                    <span class="results-count">Showing top processes (real-time)</span>
+                    <span class="results-count" id="processLiveNote">Real-time · updates every 2 s</span>
                 </div>
                 <div class="process-table-wrap">
                     <table class="process-table">
@@ -126,7 +140,9 @@
                             </tr>
                         </thead>
                         <tbody id="processTableBody">
-                            <tr><td colspan="7"><div class="loading"><div class="spinner"></div>Loading processes...</div></td></tr>
+                            <tr><td colspan="7">
+                                <div class="loading"><div class="spinner"></div>Loading processes...</div>
+                            </td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -134,9 +150,9 @@
 
             <!-- === Packages View === -->
             <div class="tab-content" id="view-packages">
-                <h3 style="font-size:14px;margin-bottom:12px">Package Receipts (pkgutil)</h3>
-                <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">
-                    All packages that have been registered via macOS installer (.pkg files).
+                <h3 style="font-size:13px;margin-bottom:10px;color:var(--text-primary)">Package Receipts (pkgutil)</h3>
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px">
+                    All packages registered via macOS installer (.pkg files).
                 </p>
                 <div class="pkg-list" id="pkgList">
                     <div class="loading"><div class="spinner"></div>Loading...</div>
@@ -145,36 +161,15 @@
 
             <!-- === Removed View === -->
             <div class="tab-content" id="view-removed">
-                <h3 style="font-size:14px;margin-bottom:12px">Potentially Removed Packages</h3>
-                <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">
-                    Packages that have receipts but their files are no longer found on disk.
+                <h3 style="font-size:13px;margin-bottom:10px;color:var(--text-primary)">Potentially Removed Packages</h3>
+                <p style="font-size:12px;color:var(--text-muted);margin-bottom:14px">
+                    Packages with receipts but missing files on disk.
                 </p>
                 <div class="pkg-list" id="removedList">
                     <div class="loading"><div class="spinner"></div>Checking...</div>
                 </div>
             </div>
 
-            <!-- === Snapshots View === -->
-            <div class="tab-content" id="view-snapshots">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                    <div>
-                        <h3 style="font-size:14px;margin-bottom:4px">App Snapshots</h3>
-                        <p style="font-size:12px;color:var(--text-muted)">
-                            Save snapshots to track what apps get added or removed over time.
-                        </p>
-                    </div>
-                    <button class="btn primary" onclick="saveSnapshot()">Save Snapshot Now</button>
-                </div>
-
-                <div id="snapshotList">
-                    <div class="loading"><div class="spinner"></div>Loading snapshots...</div>
-                </div>
-
-                <h3 style="font-size:14px;margin:24px 0 12px">Changes Since Last Snapshot</h3>
-                <div id="snapshotComparison">
-                    <div class="empty-state">Save a snapshot first to start tracking.</div>
-                </div>
-            </div>
         </main>
     </div>
 
